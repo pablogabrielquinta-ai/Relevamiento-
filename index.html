@@ -141,6 +141,20 @@
   .foto-modal img { max-width: 100%; max-height: 75vh; border-radius: 8px; }
   .foto-modal .btn-row { width: 100%; max-width: 400px; }
 
+  #printArea { display: none; }
+  @media print {
+    body * { visibility: hidden; }
+    #printArea, #printArea * { visibility: visible; }
+    #printArea { display: block; position: absolute; top: 0; left: 0; width: 100%; }
+    .print-title { font-size: 20px; font-weight: bold; margin-bottom: 4px; }
+    .print-sub { font-size: 12px; color: #555; margin-bottom: 16px; }
+    .print-calle { font-size: 15px; font-weight: bold; margin-top: 18px; border-bottom: 1px solid #999; padding-bottom: 4px; }
+    .print-med { margin: 10px 0; page-break-inside: avoid; }
+    .print-med .print-med-title { font-size: 13px; font-weight: bold; }
+    .print-med .print-med-sub { font-size: 11px; color: #555; }
+    .print-med img { max-width: 320px; max-height: 240px; margin-top: 4px; border: 1px solid #ccc; }
+  }
+
   .add-form { display: flex; gap: 8px; margin-top: 10px; align-items: flex-end; }
   .add-form .fld { flex: 1; }
   .add-form .fld label { margin: 0 0 4px 0; font-size: 11px; }
@@ -243,6 +257,7 @@
       <button class="btn-sec amber" id="btnExportRuta">&#128190; Exportar a Excel</button>
     </div>
     <div class="btn-row">
+      <button class="btn-sec" id="btnExportPdf">&#128196; Exportar PDF (con fotos)</button>
       <button class="btn-sec red" id="btnEliminarRuta">Eliminar ruta</button>
     </div>
   </div>
@@ -260,6 +275,8 @@
     <button class="btn-sec red" id="btnEliminarFoto">Eliminar foto</button>
   </div>
 </div>
+
+<div id="printArea"></div>
 
 <script>
 (function () {
@@ -801,6 +818,45 @@
     var route = getRoute(currentRouteId);
     exportRoutesToCsv([route], 'ruta_' + route.numero);
   });
+
+  document.getElementById('btnExportPdf').addEventListener('click', function () {
+    var route = getRoute(currentRouteId);
+    var medsConFoto = [];
+    for (var i = 0; i < route.calles.length; i++) {
+      var meds = route.calles[i].medidores;
+      for (var j = 0; j < meds.length; j++) { if (meds[j].tieneFoto) medsConFoto.push(meds[j].id); }
+    }
+    var promesas = medsConFoto.map(function (id) {
+      return obtenerFoto(id).then(function (dataUrl) { return { id: id, dataUrl: dataUrl }; }).catch(function () { return { id: id, dataUrl: null }; });
+    });
+    Promise.all(promesas).then(function (resultados) {
+      var fotosPorId = {};
+      resultados.forEach(function (r) { fotosPorId[r.id] = r.dataUrl; });
+      renderPrintArea(route, fotosPorId);
+      setTimeout(function () { window.print(); }, 150);
+    });
+  });
+
+  function renderPrintArea(route, fotosPorId) {
+    var html = '<div class="print-title">RUTA ' + escapeHtml(route.numero) + '</div>';
+    html += '<div class="print-sub">' + fmtFecha(route.fecha) + (route.zona ? ' \u2022 ' + escapeHtml(route.zona) : '') + ' \u2022 ' + totalMedidores(route) + ' medidores</div>';
+    for (var i = 0; i < route.calles.length; i++) {
+      var calle = route.calles[i];
+      html += '<div class="print-calle">\uD83D\uDEE3\uFE0F ' + escapeHtml(calle.nombre) + ' \u2014 ' + calle.medidores.length + ' medidores</div>';
+      for (var j = 0; j < calle.medidores.length; j++) {
+        var m = calle.medidores[j];
+        var og = ordenGlobalDe(route, i, j);
+        html += '<div class="print-med">';
+        html += '<div class="print-med-title">' + pad3(og) + ' \u2014 Medidor ' + escapeHtml(m.numMedidor) + (m.altura ? ' \u2014 altura ' + escapeHtml(m.altura) : '') + '</div>';
+        if (m.obs) html += '<div class="print-med-sub">' + escapeHtml(m.obs) + '</div>';
+        if (m.tieneFoto && fotosPorId[m.id]) {
+          html += '<img src="' + fotosPorId[m.id] + '" alt="Foto medidor ' + escapeHtml(m.numMedidor) + '">';
+        }
+        html += '</div>';
+      }
+    }
+    document.getElementById('printArea').innerHTML = html;
+  }
 
   // ---------- Export CSV ----------
   function exportRoutesToCsv(routes, fileBase) {
