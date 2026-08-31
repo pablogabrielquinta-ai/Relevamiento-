@@ -264,9 +264,24 @@
 <script>
 (function () {
   var STORAGE_KEY = 'dpec_armador_rutas_v1';
+  var SESSION_KEY = 'dpec_armador_rutas_session_v1';
   var currentGps = null;
   var currentRouteId = null;
   var currentTab = 'armado';
+
+  function saveSession() {
+    if (currentRouteId) {
+      localStorage.setItem(SESSION_KEY, JSON.stringify({ routeId: currentRouteId, tab: currentTab }));
+    } else {
+      localStorage.removeItem(SESSION_KEY);
+    }
+  }
+  function loadSession() {
+    try {
+      var raw = localStorage.getItem(SESSION_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+  }
 
   // ---------- persistencia ----------
   function loadRoutes() {
@@ -479,6 +494,7 @@
   window.appAbrirRuta = function (id) {
     currentRouteId = id;
     currentTab = 'armado';
+    saveSession();
     document.getElementById('screenHome').classList.add('hidden');
     document.getElementById('screenRoute').classList.remove('hidden');
     document.getElementById('btnBack').style.display = 'inline-block';
@@ -488,6 +504,7 @@
 
   function volverHome() {
     currentRouteId = null;
+    saveSession();
     document.getElementById('screenRoute').classList.add('hidden');
     document.getElementById('screenHome').classList.remove('hidden');
     document.getElementById('btnBack').style.display = 'none';
@@ -499,6 +516,7 @@
 
   function setTab(tab) {
     currentTab = tab;
+    saveSession();
     document.getElementById('tabArmado').className = 'tab-btn' + (tab === 'armado' ? ' active' : '');
     document.getElementById('tabRecorrido').className = 'tab-btn' + (tab === 'recorrido' ? ' active' : '');
     document.getElementById('viewArmado').className = tab === 'armado' ? '' : 'hidden';
@@ -822,7 +840,13 @@
   }
 
   // ---------- init ----------
-  renderHome();
+  var session = loadSession();
+  if (session && session.routeId && getRoute(session.routeId)) {
+    appAbrirRuta(session.routeId);
+    if (session.tab === 'recorrido') { setTab('recorrido'); renderRoute(); }
+  } else {
+    renderHome();
+  }
   startGpsWatch();
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', function () {
