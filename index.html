@@ -371,14 +371,14 @@
     reader.onload = function (e) {
       var img = new Image();
       img.onload = function () {
-        var maxDim = 900;
+        var maxDim = 700;
         var w = img.width, h = img.height;
         if (w > h && w > maxDim) { h = Math.round(h * maxDim / w); w = maxDim; }
         else if (h > maxDim) { w = Math.round(w * maxDim / h); h = maxDim; }
         var canvas = document.createElement('canvas');
         canvas.width = w; canvas.height = h;
         canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-        callback(canvas.toDataURL('image/jpeg', 0.6));
+        callback(canvas.toDataURL('image/jpeg', 0.5));
       };
       img.src = e.target.result;
     };
