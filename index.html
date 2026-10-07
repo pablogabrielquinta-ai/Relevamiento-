@@ -141,6 +141,18 @@
   .foto-modal img { max-width: 100%; max-height: 75vh; border-radius: 8px; }
   .foto-modal .btn-row { width: 100%; max-width: 400px; }
 
+  .scan-btn {
+    background: var(--bg-card2); border: 1px solid var(--amber); color: var(--amber);
+    border-radius: 8px; padding: 12px 14px; font-size: 14px; font-weight: bold; white-space: nowrap;
+  }
+  .scan-modal {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: #000;
+    z-index: 110; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 16px; gap: 14px;
+  }
+  .scan-modal video { width: 100%; max-width: 480px; max-height: 65vh; border-radius: 10px; background: #111; }
+  .scan-hint { color: var(--amber); font-size: 15px; font-weight: bold; text-align: center; }
+
   #printArea { display: none; }
   @media print {
     body * { visibility: hidden; }
@@ -277,6 +289,14 @@
   <div class="btn-row">
     <button class="btn-sec" id="btnCerrarFoto">Cerrar</button>
     <button class="btn-sec red" id="btnEliminarFoto">Eliminar foto</button>
+  </div>
+</div>
+
+<div class="scan-modal hidden" id="scanModal">
+  <div class="scan-hint">Apunt&aacute; al c&oacute;digo de barras del medidor</div>
+  <video id="scanVideo" playsinline muted autoplay></video>
+  <div class="btn-row" style="width:100%;max-width:400px;">
+    <button class="btn-sec" id="btnCerrarScan">Cancelar</button>
   </div>
 </div>
 
@@ -428,10 +448,30 @@
     if (!navigator.geolocation) return;
     navigator.geolocation.watchPosition(
       function (pos) {
-        currentGps = { lat: pos.coords.latitude, lon: pos.coords.longitude, acc: Math.round(pos.coords.accuracy) };
+        currentGps = { lat: pos.coords.latitude, lon: pos.coords.longitude, acc: Math.round(pos.coords.accuracy), t: Date.now() };
       },
-      function () { /* silencioso: si falla, currentGps queda null y se guarda vac\u00edo */ },
+      function () { /* silencioso: si falla, se reintenta al agregar cada medidor */ },
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 8000 }
+    );
+  }
+
+  // Devuelve una ubicaci\u00f3n actual: usa la del seguimiento si tiene menos de 15 s,
+  // si no pide una nueva (hasta 7 s) y si no llega usa la \u00faltima que tenga.
+  var GPS_FRESCO_MS = 15000;
+  function getGps(callback) {
+    if (currentGps && (Date.now() - currentGps.t) < GPS_FRESCO_MS) { callback(currentGps); return; }
+    if (!navigator.geolocation) { callback(currentGps); return; }
+    var terminado = false;
+    function fin(g) { if (terminado) return; terminado = true; callback(g); }
+    var timer = setTimeout(function () { fin(currentGps); }, 7000);
+    navigator.geolocation.getCurrentPosition(
+      function (pos) {
+        clearTimeout(timer);
+        currentGps = { lat: pos.coords.latitude, lon: pos.coords.longitude, acc: Math.round(pos.coords.accuracy), t: Date.now() };
+        fin(currentGps);
+      },
+      function () { clearTimeout(timer); fin(currentGps); },
+      { enableHighAccuracy: true, timeout: 6000, maximumAge: 0 }
     );
   }
 
@@ -591,7 +631,7 @@
         var m = calle.medidores[j];
         var og = ordenGlobalDe(route, i, j);
         html += '<div class="med-row"><div class="med-orden">' + pad3(og) + '</div>';
-        html += '<div class="med-info"><b>' + escapeHtml(m.numMedidor) + '</b>' + (m.altura ? ' \u2014 altura ' + escapeHtml(m.altura) : '') + '</div>';
+        html += '<div class="med-info"><b>' + escapeHtml(m.numMedidor) + '</b>' + (m.altura ? ' \u2014 altura ' + escapeHtml(m.altura) : '') + (!m.lat ? ' <span style="color:var(--red);font-size:11px;">\u00b7 sin ubicaci\u00f3n</span>' : '') + '</div>';
         html += '<div class="med-actions">';
         html += '<button class="foto' + (m.tieneFoto ? ' tiene' : '') + '" onclick="appFoto(\'' + m.id + '\',' + (m.tieneFoto ? 'true' : 'false') + ')">\uD83D\uDCF7</button>';
         if (isActive) {
@@ -606,6 +646,9 @@
       if (isActive) {
         html += '<div class="add-form">';
         html += '<div class="fld"><label>N\u00b0 Medidor</label><input type="text" inputmode="numeric" id="inpMedidor" placeholder="Ej: 45821"></div>';
+        html += '<button class="scan-btn" onclick="appEscanear()">\ud83d\udcf7 Escanear</button>';
+        html += '</div>';
+        html += '<div class="add-form">';
         html += '<div class="fld"><label>Altura</label><input type="text" inputmode="numeric" id="inpAltura" placeholder="Ej: 1200"></div>';
         html += '<button class="add-btn" onclick="appAgregarMedidor(\'' + calle.id + '\')">AGREGAR</button>';
         html += '</div>';
@@ -646,29 +689,116 @@
     return null;
   }
 
+  var scanGps = null;     // ubicaci\u00f3n tomada en el momento de leer el c\u00f3digo
+  var scanGpsTs = 0;
+  var agregando = false;
+
   window.appAgregarMedidor = function (calleId) {
+    if (agregando) return;
     var numMedidor = document.getElementById('inpMedidor').value.trim();
     var altura = document.getElementById('inpAltura').value.trim();
     if (!numMedidor) { alert('Ingres\u00e1 el n\u00famero de medidor.'); return; }
 
-    var route = getRoute(currentRouteId);
-    var calle = findCalle(route, calleId);
-    calle.medidores.push({
-      id: uid('m'),
-      numMedidor: numMedidor,
-      altura: altura,
-      lat: currentGps ? currentGps.lat : '',
-      lon: currentGps ? currentGps.lon : '',
-      acc: currentGps ? currentGps.acc : '',
-      ts: Date.now()
-    });
-    updateRoute(route);
-    renderRoute();
+    agregando = true;
+    var btn = document.querySelector('.add-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'UBICANDO...'; }
 
-    document.getElementById('inpMedidor').value = '';
-    document.getElementById('inpAltura').value = '';
-    document.getElementById('inpMedidor').focus();
+    function guardar(gps) {
+      var route = getRoute(currentRouteId);
+      var calle = route ? findCalle(route, calleId) : null;
+      agregando = false;
+      if (!calle) { renderRoute(); return; }
+      calle.medidores.push({
+        id: uid('m'),
+        numMedidor: numMedidor,
+        altura: altura,
+        lat: gps ? gps.lat : '',
+        lon: gps ? gps.lon : '',
+        acc: gps ? gps.acc : '',
+        ts: Date.now()
+      });
+      updateRoute(route);
+      scanGps = null;
+      renderRoute();
+      var inp = document.getElementById('inpMedidor');
+      if (inp) inp.focus();
+      showToast(gps ? 'Agregado \u2713' : 'Agregado (sin ubicaci\u00f3n)');
+    }
+
+    // Si se ley\u00f3 con la c\u00e1mara hace poco, se usa la ubicaci\u00f3n de ese momento.
+    if (scanGps && (Date.now() - scanGpsTs) < 120000) guardar(scanGps);
+    else getGps(guardar);
   };
+
+  // ---------- Lector de códigos de barras (cámara, offline) ----------
+  var scanStream = null;
+  var scanTimer = null;
+  var scanDetector = null;
+
+  function detenerScan() {
+    if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
+    if (scanStream) {
+      var tracks = scanStream.getTracks();
+      for (var i = 0; i < tracks.length; i++) tracks[i].stop();
+      scanStream = null;
+    }
+    var v = document.getElementById('scanVideo');
+    if (v) v.srcObject = null;
+    document.getElementById('scanModal').classList.add('hidden');
+  }
+
+  function alSerLeido(valor) {
+    valor = String(valor || '').trim();
+    if (!valor) return;
+    detenerScan();
+    if (navigator.vibrate) navigator.vibrate(120);
+    var inp = document.getElementById('inpMedidor');
+    if (inp) inp.value = valor;
+    // ubicación tomada en el momento de la lectura
+    scanGps = null;
+    getGps(function (g) { scanGps = g; scanGpsTs = Date.now(); });
+    showToast('Leído: ' + valor);
+    var alt = document.getElementById('inpAltura');
+    if (alt) alt.focus();
+  }
+
+  window.appEscanear = function () {
+    if (!('BarcodeDetector' in window) || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      alert('Este celular o navegador no tiene lector de códigos. Cargá el número a mano.');
+      return;
+    }
+    var preferidos = ['code_128', 'code_39', 'code_93', 'codabar', 'ean_13', 'ean_8', 'itf', 'upc_a', 'upc_e', 'qr_code', 'data_matrix'];
+    BarcodeDetector.getSupportedFormats().then(function (soportados) {
+      var formatos = preferidos.filter(function (f) { return soportados.indexOf(f) !== -1; });
+      scanDetector = formatos.length ? new BarcodeDetector({ formats: formatos }) : new BarcodeDetector();
+      return navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false
+      });
+    }).then(function (stream) {
+      scanStream = stream;
+      var v = document.getElementById('scanVideo');
+      v.srcObject = stream;
+      document.getElementById('scanModal').classList.remove('hidden');
+      var p = v.play();
+      if (p && p.catch) p.catch(function () {});
+      var ocupado = false;
+      scanTimer = setInterval(function () {
+        if (ocupado || v.readyState < 2) return;
+        ocupado = true;
+        scanDetector.detect(v).then(function (codigos) {
+          ocupado = false;
+          if (scanTimer && codigos && codigos.length) alSerLeido(codigos[0].rawValue);
+        }).catch(function () { ocupado = false; });
+      }, 250);
+    }).catch(function (err) {
+      detenerScan();
+      alert('No se pudo abrir la cámara (' + (err && err.name ? err.name : 'error') + '). Revisá el permiso de cámara de la app.');
+    });
+  };
+
+  document.getElementById('btnCerrarScan').addEventListener('click', detenerScan);
+  document.addEventListener('visibilitychange', function () { if (document.hidden) detenerScan(); });
 
   window.appMover = function (calleId, idx, dir) {
     var route = getRoute(currentRouteId);
