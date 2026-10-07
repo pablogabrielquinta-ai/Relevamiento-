@@ -257,6 +257,10 @@
       <button class="btn-sec amber" id="btnExportRuta">&#128190; Exportar a Excel</button>
     </div>
     <div class="btn-row">
+      <button class="btn-sec green" id="btnShareExcel">&#128228; Compartir Excel</button>
+      <button class="btn-sec green" id="btnShareFotos">&#128228; Compartir con fotos</button>
+    </div>
+    <div class="btn-row">
       <button class="btn-sec" id="btnExportPdf">&#128196; Exportar PDF (con fotos)</button>
       <button class="btn-sec red" id="btnEliminarRuta">Eliminar ruta</button>
     </div>
@@ -859,7 +863,7 @@
   }
 
   // ---------- Export CSV ----------
-  function exportRoutesToCsv(routes, fileBase) {
+  function buildCsv(routes) {
     var hasData = false;
     var rows = ['Ruta;Fecha;Zona;Orden Global;Calle;Orden en Calle;N\u00b0 Medidor;Altura;Foto;Latitud;Longitud;Precision GPS (m)'];
     for (var r = 0; r < routes.length; r++) {
@@ -880,20 +884,78 @@
         }
       }
     }
-    if (!hasData) { alert('No hay medidores cargados para exportar.'); return; }
+    if (!hasData) return null;
+    return '\uFEFF' + rows.join('\r\n');
+  }
 
-    var csvContent = rows.join('\r\n');
-    var blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+  function stamp() {
+    var d = new Date();
+    return d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '_' + pad(d.getHours()) + pad(d.getMinutes());
+  }
+
+  function exportRoutesToCsv(routes, fileBase) {
+    var csv = buildCsv(routes);
+    if (!csv) { alert('No hay medidores cargados para exportar.'); return; }
+    var blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     var url = URL.createObjectURL(blob);
     var a = document.createElement('a');
-    var d = new Date();
     a.href = url;
-    a.download = fileBase + '_' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '_' + pad(d.getHours()) + pad(d.getMinutes()) + '.csv';
+    a.download = fileBase + '_' + stamp() + '.csv';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
   }
+
+  // ---------- Compartir (WhatsApp, mail, Drive...) ----------
+  function dataUrlToFile(dataUrl, name) {
+    var parts = dataUrl.split(',');
+    var bin = atob(parts[1]);
+    var arr = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return new File([arr], name, { type: 'image/jpeg' });
+  }
+
+  function compartirRuta(conFotos) {
+    var route = getRoute(currentRouteId);
+    var csv = buildCsv([route]);
+    if (!csv) { alert('No hay medidores cargados para compartir.'); return; }
+    var base = 'ruta_' + route.numero + '_' + stamp();
+    var files = [new File([csv], base + '.csv', { type: 'text/csv' })];
+    var titulo = 'Ruta ' + route.numero + ' - ' + fmtFecha(route.fecha);
+
+    function enviar() {
+      if (navigator.canShare && navigator.canShare({ files: files }) && navigator.share) {
+        navigator.share({ files: files, title: titulo, text: titulo }).catch(function (err) {
+          if (err && err.name === 'AbortError') return;
+          alert('No se pudo compartir: ' + (err && err.message ? err.message : err));
+        });
+      } else {
+        exportRoutesToCsv([route], 'ruta_' + route.numero);
+        alert('Este navegador no permite compartir directo. Se descarg\u00F3 el archivo en Descargas y lo pod\u00E9s enviar desde ah\u00ED.');
+      }
+    }
+
+    if (!conFotos) { enviar(); return; }
+
+    var items = [];
+    for (var i = 0; i < route.calles.length; i++) {
+      for (var j = 0; j < route.calles[i].medidores.length; j++) {
+        var m = route.calles[i].medidores[j];
+        if (m.tieneFoto) items.push({ id: m.id, nombre: pad3(ordenGlobalDe(route, i, j)) + '_' + route.calles[i].nombre.replace(/[^A-Za-z0-9]+/g, '_') + '_med' + m.numMedidor + '.jpg' });
+      }
+    }
+    if (items.length === 0) { alert('Esta ruta todav\u00EDa no tiene fotos. Se comparte solo el Excel.'); enviar(); return; }
+
+    Promise.all(items.map(function (it) {
+      return obtenerFoto(it.id).then(function (dataUrl) {
+        if (dataUrl) files.push(dataUrlToFile(dataUrl, it.nombre));
+      }).catch(function () {});
+    })).then(enviar);
+  }
+
+  document.getElementById('btnShareExcel').addEventListener('click', function () { compartirRuta(false); });
+  document.getElementById('btnShareFotos').addEventListener('click', function () { compartirRuta(true); });
 
   // ---------- init ----------
   var session = loadSession();

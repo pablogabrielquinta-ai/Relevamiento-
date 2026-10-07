@@ -1,4 +1,4 @@
-var CACHE_NAME = 'dpec-armador-rutas-v5';
+var CACHE_NAME = 'dpec-armador-rutas-v6';
 var FILES_TO_CACHE = ['./index.html', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', function (event) {
