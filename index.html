@@ -153,6 +153,22 @@
   .scan-modal video { width: 100%; max-width: 480px; max-height: 65vh; border-radius: 10px; background: #111; }
   .scan-hint { color: var(--amber); font-size: 15px; font-weight: bold; text-align: center; }
 
+  /* Mapa */
+  .map-card { padding: 0; overflow: hidden; position: relative; }
+  .map-box { width: 100%; height: 300px; background: #1b2029; position: relative; }
+  .ruta-mapa-box { width: 100%; height: 62vh; min-height: 340px; background: #1b2029; position: relative; border-radius: 12px; overflow: hidden; border: 1px solid var(--border); margin-bottom: 14px; }
+  .map-empty { position: absolute; left: 0; right: 0; top: 0; bottom: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 24px 70px 24px 24px; color: var(--text-dim); font-size: 14px; z-index: 5; pointer-events: none; }
+  .map-legend { position: absolute; left: 8px; bottom: 8px; z-index: 10; background: rgba(18,18,18,0.88); border: 1px solid var(--border); border-radius: 10px; padding: 6px 10px; font-size: 12px; max-height: 55%; overflow-y: auto; }
+  .map-legend div { display: flex; align-items: center; gap: 7px; padding: 2px 0; white-space: nowrap; }
+  .map-legend i { width: 11px; height: 11px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+  .map-legend .sg { color: var(--text-dim); }
+  .map-note { position: absolute; left: 8px; top: 8px; z-index: 10; background: rgba(18,18,18,0.88); border: 1px solid var(--red); color: #ff8a80; font-size: 12px; border-radius: 8px; padding: 5px 9px; max-width: 70%; }
+  .map-attr { position: absolute; right: 4px; bottom: 2px; z-index: 10; font-size: 10px; color: #ddd; background: rgba(0,0,0,0.55); padding: 1px 5px; border-radius: 3px; display: none; }
+  .map-ctrl { position: absolute; right: 8px; top: 8px; z-index: 10; display: flex; flex-direction: column; gap: 4px; }
+  .map-ctrl button { width: 42px; height: 42px; border: 1px solid var(--border); background: rgba(30,30,30,0.95); color: var(--text); font-size: 22px; font-weight: bold; border-radius: 8px; padding: 0; }
+  .map-ctrl button:active { background: var(--amber); color: #1a1a1a; }
+  .route-card .circ { width: 34px; height: 34px; border-radius: 50%; color: #101010; font-weight: 800; font-size: 15px; display: flex; align-items: center; justify-content: center; margin-right: 12px; flex-shrink: 0; }
+
   #printArea { display: none; }
   @media print {
     body * { visibility: hidden; }
@@ -230,6 +246,8 @@
       </div>
     </div>
 
+    <div class="card map-card" id="mapCardHome"><div class="map-box" id="mapaHome"></div></div>
+
     <div id="listaRutas"></div>
 
     <div class="btn-row" id="homeExportRow" style="display:none;">
@@ -243,6 +261,7 @@
     <div class="tabs">
       <button class="tab-btn active" id="tabArmado">Armado</button>
       <button class="tab-btn" id="tabRecorrido">Recorrido</button>
+      <button class="tab-btn" id="tabMapa">Mapa</button>
     </div>
 
     <div id="viewArmado">
@@ -262,6 +281,10 @@
 
     <div id="viewRecorrido" class="hidden">
       <div class="card" id="recorridoContainer"></div>
+    </div>
+
+    <div id="viewMapa" class="hidden">
+      <div class="ruta-mapa-box" id="mapaRuta"></div>
     </div>
 
     <div class="btn-row">
@@ -476,10 +499,302 @@
   }
 
   // ================= HOME =================
+  // ================= MAPA (propio, sin librerias; funciona sin Internet) =================
+  // Sin Internet: puntos y lineas de las rutas sobre fondo liso.
+  // Con Internet: se agrega el mapa de calles (OpenStreetMap) de fondo.
+  var COLORES = ['#4caf50', '#42a5f5', '#ab47bc', '#ffb300', '#ef5350', '#26c6da', '#ec407a', '#7e8ce0', '#9ccc65', '#ff7043', '#26a69a', '#d4e157'];
+
+  function puntosDeRuta(route) {
+    var pts = [], orden = 0, sin = 0;
+    for (var i = 0; i < route.calles.length; i++) {
+      for (var j = 0; j < route.calles[i].medidores.length; j++) {
+        orden++;
+        var m = route.calles[i].medidores[j];
+        var la = parseFloat(m.lat), lo = parseFloat(m.lon);
+        if (!isNaN(la) && !isNaN(lo)) pts.push({ lat: la, lon: lo, n: orden, med: m.numMedidor, calle: route.calles[i].nombre });
+        else sin++;
+      }
+    }
+    return { pts: pts, sin: sin };
+  }
+
+  function crearMapa(contenedor, opciones) {
+    var canvas = document.createElement('canvas');
+    canvas.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;touch-action:none;display:block;';
+    contenedor.appendChild(canvas);
+    var ctx = canvas.getContext('2d');
+
+    var vacio = document.createElement('div');
+    vacio.className = 'map-empty';
+    vacio.textContent = opciones.textoVacio || 'Todav\u00eda no hay ubicaciones para mostrar.';
+    contenedor.appendChild(vacio);
+
+    var leyenda = null;
+    if (opciones.leyenda) { leyenda = document.createElement('div'); leyenda.className = 'map-legend'; contenedor.appendChild(leyenda); }
+    var nota = document.createElement('div'); nota.className = 'map-note hidden'; contenedor.appendChild(nota);
+    var attr = document.createElement('div'); attr.className = 'map-attr'; attr.textContent = '\u00a9 OpenStreetMap'; contenedor.appendChild(attr);
+
+    var caja = document.createElement('div'); caja.className = 'map-ctrl';
+    function mkBtn(txt, titulo) { var b = document.createElement('button'); b.textContent = txt; b.title = titulo; return b; }
+    var bMas = mkBtn('+', 'Acercar'), bMenos = mkBtn('\u2212', 'Alejar'), bAj = mkBtn('\u25a3', 'Ver todo'), bYo = mkBtn('\u2316', 'Mi ubicaci\u00f3n');
+    caja.appendChild(bMas); caja.appendChild(bMenos); caja.appendChild(bAj); caja.appendChild(bYo);
+    contenedor.appendChild(caja);
+
+    var W = 300, H = 300, dpr = 1;
+    var lat0 = -27.47, lon0 = -58.83, z = 14;
+    var capas = [], pins = [], tiles = {}, nTiles = 0, yo = null, pendiente = false;
+
+    function mx(lon, zz) { return (lon + 180) / 360 * 256 * Math.pow(2, zz); }
+    function my(lat, zz) { var s = Math.sin(lat * Math.PI / 180); return (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * 256 * Math.pow(2, zz); }
+    function lonDe(x, zz) { return x / (256 * Math.pow(2, zz)) * 360 - 180; }
+    function latDe(y, zz) { var n = Math.PI - 2 * Math.PI * y / (256 * Math.pow(2, zz)); return 180 / Math.PI * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n))); }
+    function aPant(lat, lon) { return { x: W / 2 + (mx(lon, z) - mx(lon0, z)), y: H / 2 + (my(lat, z) - my(lat0, z)) }; }
+    function pedir() {
+      if (pendiente) return;
+      pendiente = true;
+      (window.requestAnimationFrame || function (f) { setTimeout(f, 16); })(function () { pendiente = false; dibujar(); });
+    }
+    function medir() {
+      var w = contenedor.clientWidth, h = contenedor.clientHeight;
+      if (!w || !h) return false;
+      dpr = window.devicePixelRatio || 1; W = w; H = h;
+      canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+      return true;
+    }
+
+    function tile(tz, tx, ty) {
+      var key = tz + '/' + tx + '/' + ty, t = tiles[key];
+      if (t) return t;
+      if (nTiles > 250) { tiles = {}; nTiles = 0; }
+      var img = new Image(); t = { img: img, ok: false };
+      img.onload = function () { t.ok = true; pedir(); };
+      img.src = 'https://tile.openstreetmap.org/' + key + '.png';
+      tiles[key] = t; nTiles++;
+      return t;
+    }
+
+    function fondo() {
+      ctx.fillStyle = '#1b2029'; ctx.fillRect(0, 0, W, H);
+      var conTiles = false;
+      if (navigator.onLine) {
+        var tz = Math.max(1, Math.min(19, Math.round(z)));
+        var esc = Math.pow(2, z - tz), cx = mx(lon0, tz), cy = my(lat0, tz);
+        var x0 = cx - (W / 2) / esc, y0 = cy - (H / 2) / esc;
+        var tx0 = Math.floor(x0 / 256), ty0 = Math.floor(y0 / 256);
+        var tx1 = Math.floor((cx + (W / 2) / esc) / 256), ty1 = Math.floor((cy + (H / 2) / esc) / 256);
+        var max = Math.pow(2, tz);
+        if ((tx1 - tx0 + 1) * (ty1 - ty0 + 1) <= 60) {
+          for (var tx = tx0; tx <= tx1; tx++) {
+            for (var ty = ty0; ty <= ty1; ty++) {
+              if (ty < 0 || ty >= max) continue;
+              var t = tile(tz, ((tx % max) + max) % max, ty);
+              if (t.ok) { ctx.drawImage(t.img, (tx * 256 - x0) * esc, (ty * 256 - y0) * esc, 256 * esc + 0.5, 256 * esc + 0.5); conTiles = true; }
+            }
+          }
+          if (conTiles) { ctx.fillStyle = 'rgba(10,14,22,0.35)'; ctx.fillRect(0, 0, W, H); }
+        }
+      }
+      attr.style.display = conTiles ? 'block' : 'none';
+      if (!conTiles) {
+        ctx.strokeStyle = '#262d3a'; ctx.lineWidth = 1;
+        var paso = 60, ox = (W / 2 - mx(lon0, z)) % paso, oy = (H / 2 - my(lat0, z)) % paso;
+        ctx.beginPath();
+        for (var gx = ox; gx < W; gx += paso) { ctx.moveTo(gx, 0); ctx.lineTo(gx, H); }
+        for (var gy = oy; gy < H; gy += paso) { ctx.moveTo(0, gy); ctx.lineTo(W, gy); }
+        ctx.stroke();
+      }
+    }
+
+    function pin(x, y, r, color, texto, info) {
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill();
+      ctx.lineWidth = Math.max(2, r / 7); ctx.strokeStyle = '#ffffff'; ctx.stroke();
+      if (texto) {
+        ctx.fillStyle = '#101010'; ctx.font = 'bold ' + Math.round(r * 0.95) + 'px sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(texto, x, y + 1);
+      }
+      if (info) pins.push({ x: x, y: y, r: Math.max(r, 20), info: info });
+    }
+    function flecha(a, b, color) {
+      var dx = b.x - a.x, dy = b.y - a.y;
+      if (Math.sqrt(dx * dx + dy * dy) < 40) return;
+      ctx.save(); ctx.translate((a.x + b.x) / 2, (a.y + b.y) / 2); ctx.rotate(Math.atan2(dy, dx));
+      ctx.beginPath(); ctx.moveTo(7, 0); ctx.lineTo(-5, -5.5); ctx.lineTo(-5, 5.5); ctx.closePath();
+      ctx.fillStyle = color; ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = '#fff'; ctx.stroke(); ctx.restore();
+    }
+
+    function dibujar() {
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      pins = [];
+      fondo();
+      var i, j, c, ps;
+      ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      var traz = [];
+      for (i = 0; i < capas.length; i++) {
+        c = capas[i]; ps = [];
+        for (j = 0; j < c.pts.length; j++) ps.push(aPant(c.pts[j].lat, c.pts[j].lon));
+        traz.push(ps);
+        ctx.lineWidth = 7; ctx.strokeStyle = 'rgba(0,0,0,0.55)'; ctx.beginPath();
+        for (j = 0; j < ps.length; j++) { if (j === 0) ctx.moveTo(ps[j].x, ps[j].y); else ctx.lineTo(ps[j].x, ps[j].y); }
+        ctx.stroke();
+        ctx.lineWidth = 3.5; ctx.strokeStyle = c.color; ctx.beginPath();
+        for (j = 0; j < ps.length; j++) { if (j === 0) ctx.moveTo(ps[j].x, ps[j].y); else ctx.lineTo(ps[j].x, ps[j].y); }
+        ctx.stroke();
+        if (c.modo === 'detalle') for (j = 1; j < ps.length; j++) flecha(ps[j - 1], ps[j], c.color);
+      }
+      for (i = 0; i < capas.length; i++) {
+        c = capas[i]; ps = traz[i];
+        if (c.modo === 'resumen') {
+          for (j = 0; j < ps.length; j++) pin(ps[j].x, ps[j].y, 4, c.color, '', null);
+          pin(ps[0].x, ps[0].y, 16, c.color, c.label, { capa: c });
+        } else {
+          var chico = ps.length > 60;
+          for (j = 0; j < ps.length; j++) {
+            var ini = (j === 0), fin = (j === ps.length - 1);
+            var col = ini ? '#4caf50' : (fin ? '#ef5350' : c.color);
+            var r = (ini || fin) ? 15 : (chico ? 8 : 13);
+            pin(ps[j].x, ps[j].y, r, col, (chico && !ini && !fin) ? '' : String(c.pts[j].n), { capa: c, pt: c.pts[j] });
+          }
+        }
+      }
+      if (yo) {
+        var yp = aPant(yo.lat, yo.lon);
+        ctx.beginPath(); ctx.arc(yp.x, yp.y, 15, 0, Math.PI * 2); ctx.fillStyle = 'rgba(66,165,245,0.28)'; ctx.fill();
+        ctx.beginPath(); ctx.arc(yp.x, yp.y, 8, 0, Math.PI * 2); ctx.fillStyle = '#42a5f5'; ctx.fill();
+        ctx.lineWidth = 3; ctx.strokeStyle = '#fff'; ctx.stroke();
+      }
+    }
+
+    function ajustar() {
+      var pts = [], i, j;
+      for (i = 0; i < capas.length; i++) for (j = 0; j < capas[i].pts.length; j++) pts.push(capas[i].pts[j]);
+      if (!pts.length && yo) pts.push(yo);
+      if (!pts.length) { pedir(); return; }
+      var a = 90, b = -90, c0 = 180, d0 = -180;
+      for (i = 0; i < pts.length; i++) {
+        if (pts[i].lat < a) a = pts[i].lat; if (pts[i].lat > b) b = pts[i].lat;
+        if (pts[i].lon < c0) c0 = pts[i].lon; if (pts[i].lon > d0) d0 = pts[i].lon;
+      }
+      var sx = mx(d0, 0) - mx(c0, 0), sy = my(a, 0) - my(b, 0), pad = 100;
+      var zx = sx > 0 ? Math.log((W - pad) / sx) / Math.LN2 : 18;
+      var zy = sy > 0 ? Math.log((H - pad) / sy) / Math.LN2 : 18;
+      z = Math.max(3, Math.min(18, Math.min(zx, zy)));
+      if (sx === 0 && sy === 0) z = 17;
+      lon0 = lonDe((mx(c0, 0) + mx(d0, 0)) / 2, 0); lat0 = latDe((my(a, 0) + my(b, 0)) / 2, 0);
+      pedir();
+    }
+    function zoomA(nz) { z = Math.max(2, Math.min(19, nz)); pedir(); }
+    bMas.addEventListener('click', function () { zoomA(z + 1); });
+    bMenos.addEventListener('click', function () { zoomA(z - 1); });
+    bAj.addEventListener('click', ajustar);
+    bYo.addEventListener('click', function () {
+      getGps(function (g) {
+        if (!g) { alert('No se pudo obtener tu ubicaci\u00f3n. Revis\u00e1 que el GPS est\u00e9 activado.'); return; }
+        yo = { lat: g.lat, lon: g.lon }; lat0 = g.lat; lon0 = g.lon; if (z < 15) z = 16; pedir();
+      });
+    });
+
+    var pun = {}, cuenta = 0, distIni = 0, zIni = 0, tDown = 0, movido = 0;
+    function rel(e) { var r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
+    function dist2() { var k = Object.keys(pun), a = pun[k[0]], b = pun[k[1]]; return Math.sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y)); }
+    canvas.addEventListener('pointerdown', function (e) {
+      try { canvas.setPointerCapture(e.pointerId); } catch (x) {}
+      pun[e.pointerId] = rel(e); cuenta = Object.keys(pun).length;
+      if (cuenta === 1) { tDown = Date.now(); movido = 0; }
+      if (cuenta === 2) { distIni = dist2(); zIni = z; movido = 99; }
+    });
+    canvas.addEventListener('pointermove', function (e) {
+      if (!pun[e.pointerId]) return;
+      var p = rel(e);
+      if (cuenta === 1) {
+        var dx = p.x - pun[e.pointerId].x, dy = p.y - pun[e.pointerId].y;
+        movido += Math.abs(dx) + Math.abs(dy);
+        lon0 = lonDe(mx(lon0, z) - dx, z); lat0 = latDe(my(lat0, z) - dy, z);
+        pun[e.pointerId] = p; pedir();
+      } else if (cuenta === 2) {
+        pun[e.pointerId] = p;
+        if (distIni > 0) { z = Math.max(2, Math.min(19, zIni + Math.log(dist2() / distIni) / Math.LN2)); pedir(); }
+      }
+    });
+    function soltar(e) {
+      if (!pun[e.pointerId]) return;
+      var p = rel(e), uno = (cuenta === 1);
+      delete pun[e.pointerId]; cuenta = Object.keys(pun).length;
+      if (uno && movido < 10 && (Date.now() - tDown) < 500) {
+        for (var i = pins.length - 1; i >= 0; i--) {
+          var q = pins[i];
+          if ((p.x - q.x) * (p.x - q.x) + (p.y - q.y) * (p.y - q.y) <= q.r * q.r) { opciones.onTap(q.info); return; }
+        }
+      }
+    }
+    canvas.addEventListener('pointerup', soltar);
+    canvas.addEventListener('pointercancel', soltar);
+    canvas.addEventListener('wheel', function (e) { e.preventDefault(); zoomA(z + (e.deltaY < 0 ? 0.5 : -0.5)); }, { passive: false });
+
+    function setCapas(nuevas, textoNota) {
+      capas = nuevas;
+      vacio.style.display = nuevas.length ? 'none' : 'flex';
+      if (leyenda) {
+        var h = '';
+        for (var i = 0; i < nuevas.length && i < 10; i++) h += '<div><i style="background:' + nuevas[i].color + '"></i>' + escapeHtml(nuevas[i].nombre) + '</div>';
+        if (nuevas.length > 10) h += '<div class="sg">y ' + (nuevas.length - 10) + ' m\u00e1s</div>';
+        leyenda.innerHTML = h;
+        leyenda.style.display = nuevas.length ? 'block' : 'none';
+      }
+      if (textoNota) { nota.textContent = textoNota; nota.className = 'map-note'; } else { nota.className = 'map-note hidden'; }
+      if (medir()) ajustar();
+    }
+    function redimensionar() { if (medir()) { ajustar(); } }
+
+    medir();
+    return { setCapas: setCapas, resize: redimensionar, redibujar: pedir };
+  }
+
+  var mapaHome = null, mapaRuta = null;
+
+  function renderMapaHome(routes) {
+    if (!mapaHome) {
+      mapaHome = crearMapa(document.getElementById('mapaHome'), {
+        leyenda: true,
+        textoVacio: 'Cuando cargues medidores, las rutas aparecen ac\u00e1 con su color.',
+        onTap: function (info) { if (info && info.capa && info.capa.id) appAbrirRuta(info.capa.id); }
+      });
+    }
+    var capas = [], sinRuta = 0;
+    for (var i = 0; i < routes.length; i++) {
+      var d = puntosDeRuta(routes[i]);
+      if (!d.pts.length) { if (totalMedidores(routes[i]) > 0) sinRuta++; continue; }
+      capas.push({ id: routes[i].id, color: COLORES[i % COLORES.length], label: String(i + 1), nombre: 'Ruta ' + routes[i].numero, pts: d.pts, modo: 'resumen' });
+    }
+    mapaHome.setCapas(capas, sinRuta ? (sinRuta + (sinRuta === 1 ? ' ruta sin ubicaciones' : ' rutas sin ubicaciones')) : '');
+  }
+
+  function renderMapaRuta(route) {
+    if (!mapaRuta) {
+      mapaRuta = crearMapa(document.getElementById('mapaRuta'), {
+        leyenda: false,
+        textoVacio: 'Esta ruta todav\u00eda no tiene ubicaciones. Se guardan solas al agregar cada medidor.',
+        onTap: function (info) {
+          if (info && info.pt) showToast(pad3(info.pt.n) + ' \u00b7 ' + info.pt.calle + ' \u00b7 medidor ' + info.pt.med);
+        }
+      });
+    }
+    var d = puntosDeRuta(route);
+    mapaRuta.setCapas(d.pts.length ? [{ id: route.id, color: '#ffb300', label: '', nombre: 'Ruta ' + route.numero, pts: d.pts, modo: 'detalle' }] : [],
+      d.sin ? (d.sin + (d.sin === 1 ? ' medidor sin ubicaci\u00f3n' : ' medidores sin ubicaci\u00f3n')) : '');
+  }
+
+  window.addEventListener('resize', function () {
+    if (mapaHome) mapaHome.resize();
+    if (mapaRuta) mapaRuta.resize();
+  });
+  window.addEventListener('online', function () { if (mapaHome) mapaHome.redibujar(); if (mapaRuta) mapaRuta.redibujar(); });
+  window.addEventListener('offline', function () { if (mapaHome) mapaHome.redibujar(); if (mapaRuta) mapaRuta.redibujar(); });
+
   function renderHome() {
     var routes = loadRoutes();
     var container = document.getElementById('listaRutas');
     document.getElementById('homeExportRow').style.display = routes.length ? 'flex' : 'none';
+    renderMapaHome(routes);
 
     if (routes.length === 0) {
       container.innerHTML = '<div class="empty-state">A\u00fan no cargaste ninguna ruta.</div>';
@@ -489,7 +804,9 @@
     var html = '';
     for (var i = 0; i < sorted.length; i++) {
       var r = sorted[i];
+      var ci = routes.indexOf(r);
       html += '<div class="route-card" onclick="appAbrirRuta(\'' + r.id + '\')">';
+      html += '<div class="circ" style="background:' + COLORES[ci % COLORES.length] + '">' + (ci + 1) + '</div>';
       html += '<div class="info"><div class="rname">RUTA ' + escapeHtml(r.numero) + '</div>';
       html += '<div class="rmeta">' + fmtFecha(r.fecha) + (r.zona ? ' &bull; ' + escapeHtml(r.zona) : '') + ' &bull; ' + totalMedidores(r) + ' medidores</div></div>';
       html += '<button class="rdelete" onclick="event.stopPropagation(); appEliminarRuta(\'' + r.id + '\')">&#128465;</button>';
@@ -582,9 +899,12 @@
     document.getElementById('tabRecorrido').className = 'tab-btn' + (tab === 'recorrido' ? ' active' : '');
     document.getElementById('viewArmado').className = tab === 'armado' ? '' : 'hidden';
     document.getElementById('viewRecorrido').className = tab === 'recorrido' ? '' : 'hidden';
+    document.getElementById('tabMapa').className = 'tab-btn' + (tab === 'mapa' ? ' active' : '');
+    document.getElementById('viewMapa').className = tab === 'mapa' ? '' : 'hidden';
   }
   document.getElementById('tabArmado').addEventListener('click', function () { setTab('armado'); renderRoute(); });
   document.getElementById('tabRecorrido').addEventListener('click', function () { setTab('recorrido'); renderRoute(); });
+  document.getElementById('tabMapa').addEventListener('click', function () { setTab('mapa'); renderRoute(); });
 
   function findActiveCalleIndex(route) {
     for (var i = 0; i < route.calles.length; i++) { if (!route.calles[i].cerrada) return i; }
@@ -599,7 +919,8 @@
     document.getElementById('headerSub').textContent = fmtFecha(route.fecha) + (route.zona ? ' \u2022 ' + route.zona : '');
 
     if (currentTab === 'armado') renderArmado(route);
-    else renderRecorrido(route);
+    else if (currentTab === 'recorrido') renderRecorrido(route);
+    else renderMapaRuta(route);
   }
 
   function ordenGlobalDe(route, calleIdx, medIdx) {
@@ -1091,7 +1412,7 @@
   var session = loadSession();
   if (session && session.routeId && getRoute(session.routeId)) {
     appAbrirRuta(session.routeId);
-    if (session.tab === 'recorrido') { setTab('recorrido'); renderRoute(); }
+    if (session.tab === 'recorrido' || session.tab === 'mapa') { setTab(session.tab); renderRoute(); }
   } else {
     renderHome();
   }

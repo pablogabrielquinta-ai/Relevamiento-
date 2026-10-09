@@ -1,4 +1,4 @@
-var CACHE_NAME = 'dpec-armador-rutas-v8';
+var CACHE_NAME = 'dpec-armador-rutas-v9';
 var FILES_TO_CACHE = ['./index.html', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', function (event) {
@@ -16,6 +16,7 @@ self.addEventListener('activate', function (event) {
 });
 
 self.addEventListener('fetch', function (event) {
+  if (new URL(event.request.url).origin !== self.location.origin) return;
   event.respondWith(
     caches.match(event.request).then(function (cached) {
       if (cached) return cached;
