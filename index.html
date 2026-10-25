@@ -154,6 +154,20 @@
   }
   .scan-modal video { width: 100%; max-width: 480px; max-height: 65vh; border-radius: 10px; background: #111; }
   .scan-hint { color: var(--amber); font-size: 15px; font-weight: bold; text-align: center; }
+  .scan-wrap { position: relative; width: 100%; max-width: 480px; }
+  .scan-wrap video { width: 100%; max-height: 52vh; border-radius: 10px; background: #111; display: block; }
+  .scan-wrap .frame { position: absolute; left: 10%; right: 10%; top: 30%; bottom: 30%; border: 2px solid rgba(255,179,0,0.85); border-radius: 10px; pointer-events: none; }
+  .scan-torch { position: absolute; right: 10px; top: 10px; width: 48px; height: 48px; border-radius: 50%; border: none; background: rgba(0,0,0,0.6); color: #fff; font-size: 22px; }
+  .scan-torch.on { background: var(--amber); color: #1a1a1a; }
+  .scan-zoom { width: 100%; max-width: 480px; display: flex; align-items: center; gap: 10px; color: var(--text-dim); font-size: 13px; }
+  .scan-zoom input { flex: 1; accent-color: var(--amber); height: 30px; }
+  .scan-res { width: 100%; max-width: 480px; background: var(--bg-card); border: 2px solid var(--amber); border-radius: 14px; padding: 14px; text-align: center; }
+  .scan-res .lbl { font-size: 12px; color: var(--text-dim); }
+  .scan-res .num { font-size: 34px; font-weight: 800; color: var(--amber); letter-spacing: 1px; word-break: break-all; margin: 4px 0 8px; }
+  .scan-res .warn { background: rgba(229,57,53,0.15); border: 1px solid var(--red); color: #ff8a80; border-radius: 8px; padding: 8px; font-size: 13px; margin-bottom: 8px; }
+  .scan-res .btn-row .btn-sec { padding: 15px; font-size: 16px; }
+  .chk-cont { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 13px; color: var(--text-dim); }
+  .chk-cont input { width: 22px; height: 22px; accent-color: var(--amber); flex-shrink: 0; margin: 0; }
 
   /* Mapa */
   .map-card { padding: 0; overflow: hidden; position: relative; }
@@ -320,9 +334,23 @@
 </div>
 
 <div class="scan-modal hidden" id="scanModal">
-  <div class="scan-hint">Apunt&aacute; al c&oacute;digo de barras del medidor</div>
-  <video id="scanVideo" playsinline muted autoplay></video>
-  <div class="btn-row" style="width:100%;max-width:400px;">
+  <div class="scan-hint" id="scanHint">Apunt&aacute; al c&oacute;digo de barras del medidor</div>
+  <div class="scan-wrap">
+    <video id="scanVideo" playsinline muted autoplay></video>
+    <div class="frame"></div>
+    <button class="scan-torch hidden" id="btnTorch" aria-label="Linterna">&#128294;</button>
+  </div>
+  <div class="scan-zoom hidden" id="scanZoomBox"><span>&#128269;</span><input type="range" id="scanZoom" min="1" max="2" step="0.1" value="1"></div>
+  <div class="scan-res hidden" id="scanResultado">
+    <div class="lbl">N&uacute;mero le&iacute;do</div>
+    <div class="num" id="scanResNum"></div>
+    <div class="warn hidden" id="scanResWarn"></div>
+    <div class="btn-row">
+      <button class="btn-sec" id="btnScanOtra">&#8635; Repetir</button>
+      <button class="btn-sec green" id="btnScanUsar">&#10003; Usar</button>
+    </div>
+  </div>
+  <div class="btn-row" id="scanBotones" style="width:100%;max-width:400px;">
     <button class="btn-sec" id="btnCerrarScan">Cancelar</button>
   </div>
 </div>
@@ -1027,6 +1055,7 @@
         html += '<div class="fld"><label>Altura</label><input type="text" inputmode="numeric" id="inpAltura" placeholder="Ej: 1200"></div>';
         html += '<button class="add-btn" onclick="appAgregarMedidor(\'' + calle.id + '\')">AGREGAR</button>';
         html += '</div>';
+        html += '<label class="chk-cont"><input type="checkbox" onchange="appSetContinuo(this.checked)"' + (getContinuo() ? ' checked' : '') + '> \uD83D\uDD01 Escaneo continuo: despu\u00e9s de agregar, abre la c\u00e1mara para el siguiente</label>';
         html += '<button class="btn-sec" style="margin-top:10px;width:100%;" onclick="appCerrarCalle(\'' + calle.id + '\')">\uD83D\uDD12 CERRAR CALLE</button>';
       }
       html += '</div></div>';
@@ -1064,6 +1093,42 @@
     return null;
   }
 
+  // ---------- aviso de medidor repetido ----------
+  function normNum(x) {
+    var n = String(x == null ? '' : x).trim().toLowerCase();
+    if (/^\d+$/.test(n)) n = n.replace(/^0+(?=\d)/, '');
+    return n;
+  }
+  function buscarDuplicado(num) {
+    var objetivo = normNum(num);
+    if (!objetivo) return null;
+    var routes = loadRoutes(), otra = null;
+    for (var r = 0; r < routes.length; r++) {
+      var route = routes[r];
+      var orden = 0;
+      for (var i = 0; i < route.calles.length; i++) {
+        for (var j = 0; j < route.calles[i].medidores.length; j++) {
+          orden++;
+          if (normNum(route.calles[i].medidores[j].numMedidor) === objetivo) {
+            var hit = { numero: route.calles[i].medidores[j].numMedidor, ruta: route.numero, calle: route.calles[i].nombre, orden: orden, misma: route.id === currentRouteId };
+            if (hit.misma) return hit;
+            if (!otra) otra = hit;
+          }
+        }
+      }
+    }
+    return otra;
+  }
+  function textoDuplicado(d) {
+    return 'El medidor ' + d.numero + ' ya est\u00e1 cargado ' + (d.misma ? 'en esta ruta' : 'en la ruta ' + d.ruta) + ' (calle ' + d.calle + ', n.\u00b0 ' + pad3(d.orden) + ').';
+  }
+
+  // ---------- escaneo continuo ----------
+  var CONT_KEY = 'dpec_armador_continuo';
+  function getContinuo() { try { return localStorage.getItem(CONT_KEY) === '1'; } catch (e) { return false; } }
+  window.appSetContinuo = function (v) { try { localStorage.setItem(CONT_KEY, v ? '1' : '0'); } catch (e) {} };
+  var vinoDeScan = false;
+
   var scanGps = null;     // ubicaci\u00f3n tomada en el momento de leer el c\u00f3digo
   var scanGpsTs = 0;
   var agregando = false;
@@ -1073,6 +1138,9 @@
     var numMedidor = document.getElementById('inpMedidor').value.trim();
     var altura = document.getElementById('inpAltura').value.trim();
     if (!numMedidor) { alert('Ingres\u00e1 el n\u00famero de medidor.'); return; }
+
+    var dup = buscarDuplicado(numMedidor);
+    if (dup && !confirm('\u26a0\ufe0f ' + textoDuplicado(dup) + '\n\n\u00bfAgregarlo igual?')) return;
 
     agregando = true;
     var btn = document.querySelector('.add-btn');
@@ -1098,6 +1166,9 @@
       var inp = document.getElementById('inpMedidor');
       if (inp) inp.focus();
       showToast(gps ? 'Agregado \u2713' : 'Agregado (sin ubicaci\u00f3n)');
+      var reabrir = vinoDeScan && getContinuo();
+      vinoDeScan = false;
+      if (reabrir) setTimeout(function () { window.appEscanear(); }, 350);
     }
 
     // Si se ley\u00f3 con la c\u00e1mara hace poco, se usa la ubicaci\u00f3n de ese momento.
@@ -1109,6 +1180,10 @@
   var scanStream = null;
   var scanTimer = null;
   var scanDetector = null;
+  var scanTrack = null;
+  var scanPendiente = '';
+  var torchOn = false;
+  var ultimaLectura = '', lecturasIguales = 0;
 
   function detenerScan() {
     if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
@@ -1117,31 +1192,123 @@
       for (var i = 0; i < tracks.length; i++) tracks[i].stop();
       scanStream = null;
     }
+    scanTrack = null; torchOn = false;
     var v = document.getElementById('scanVideo');
     if (v) v.srcObject = null;
+    document.getElementById('btnTorch').classList.add('hidden');
+    document.getElementById('btnTorch').classList.remove('on');
+    document.getElementById('scanZoomBox').classList.add('hidden');
+    ocultarResultadoScan();
     document.getElementById('scanModal').classList.add('hidden');
   }
 
+  function ocultarResultadoScan() {
+    document.getElementById('scanResultado').classList.add('hidden');
+    document.getElementById('scanBotones').classList.remove('hidden');
+    document.getElementById('scanHint').classList.remove('hidden');
+  }
+
+  function iniciarDeteccion() {
+    var v = document.getElementById('scanVideo');
+    ultimaLectura = ''; lecturasIguales = 0;
+    var ocupado = false;
+    if (scanTimer) clearInterval(scanTimer);
+    scanTimer = setInterval(function () {
+      if (ocupado || v.readyState < 2) return;
+      ocupado = true;
+      scanDetector.detect(v).then(function (codigos) {
+        ocupado = false;
+        if (!scanTimer) return;
+        if (codigos && codigos.length) {
+          var val = String(codigos[0].rawValue || '').trim();
+          if (!val) return;
+          // se pide la misma lectura 2 veces seguidas: evita n\u00fameros mal le\u00eddos
+          if (val === ultimaLectura) lecturasIguales++; else { ultimaLectura = val; lecturasIguales = 1; }
+          if (lecturasIguales >= 2) alSerLeido(val);
+        } else { ultimaLectura = ''; lecturasIguales = 0; }
+      }).catch(function () { ocupado = false; });
+    }, 200);
+  }
+
+  // Al leer un c\u00f3digo se muestra el n\u00famero grande para confirmarlo
   function alSerLeido(valor) {
     valor = String(valor || '').trim();
     if (!valor) return;
-    detenerScan();
+    if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
+    var v = document.getElementById('scanVideo');
+    try { v.pause(); } catch (e) {}
     if (navigator.vibrate) navigator.vibrate(120);
+    scanPendiente = valor;
+    document.getElementById('scanResNum').textContent = valor;
+    var dup = buscarDuplicado(valor);
+    var w = document.getElementById('scanResWarn');
+    if (dup) { w.textContent = '\u26a0\ufe0f ' + textoDuplicado(dup); w.classList.remove('hidden'); }
+    else { w.classList.add('hidden'); }
+    document.getElementById('scanResultado').classList.remove('hidden');
+    document.getElementById('scanBotones').classList.add('hidden');
+    document.getElementById('scanHint').classList.add('hidden');
+  }
+
+  document.getElementById('btnScanUsar').addEventListener('click', function () {
+    var valor = scanPendiente;
+    detenerScan();
+    if (!valor) return;
     var inp = document.getElementById('inpMedidor');
     if (inp) inp.value = valor;
-    // ubicación tomada en el momento de la lectura
+    vinoDeScan = true;
+    // ubicaci\u00f3n tomada en el momento de la lectura
     scanGps = null;
     getGps(function (g) { scanGps = g; scanGpsTs = Date.now(); });
-    showToast('Leído: ' + valor);
+    showToast('Le\u00eddo: ' + valor);
     var alt = document.getElementById('inpAltura');
     if (alt) alt.focus();
+  });
+  document.getElementById('btnScanOtra').addEventListener('click', function () {
+    scanPendiente = '';
+    ocultarResultadoScan();
+    var v = document.getElementById('scanVideo');
+    var p = v.play(); if (p && p.catch) p.catch(function () {});
+    iniciarDeteccion();
+  });
+
+  // Linterna y zoom (si el celular los permite)
+  function configurarControlesCamara(stream) {
+    scanTrack = stream.getVideoTracks()[0] || null;
+    var caps = {};
+    try { caps = (scanTrack && scanTrack.getCapabilities) ? scanTrack.getCapabilities() : {}; } catch (e) { caps = {}; }
+    var bT = document.getElementById('btnTorch');
+    if (caps.torch) bT.classList.remove('hidden'); else bT.classList.add('hidden');
+    var zb = document.getElementById('scanZoomBox'), zr = document.getElementById('scanZoom');
+    if (caps.zoom && caps.zoom.max > caps.zoom.min) {
+      var min = caps.zoom.min, max = min + (caps.zoom.max - min) * 0.7;   // tope al 70 %: evita que se trabe la c\u00e1mara
+      zr.min = min; zr.max = max; zr.step = caps.zoom.step || 0.1; zr.value = min;
+      zb.classList.remove('hidden');
+    } else { zb.classList.add('hidden'); }
   }
+  document.getElementById('btnTorch').addEventListener('click', function () {
+    if (!scanTrack) return;
+    torchOn = !torchOn;
+    var b = document.getElementById('btnTorch');
+    scanTrack.applyConstraints({ advanced: [{ torch: torchOn }] }).then(function () {
+      b.classList.toggle('on', torchOn);
+    }).catch(function () { torchOn = false; b.classList.remove('on'); });
+  });
+  var zoomTimer = null;
+  document.getElementById('scanZoom').addEventListener('input', function (e) {
+    var val = parseFloat(e.target.value);
+    if (zoomTimer) return;
+    zoomTimer = setTimeout(function () {
+      zoomTimer = null;
+      if (scanTrack) scanTrack.applyConstraints({ advanced: [{ zoom: val }] }).catch(function () {});
+    }, 120);
+  });
 
   window.appEscanear = function () {
     if (!('BarcodeDetector' in window) || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      alert('Este celular o navegador no tiene lector de códigos. Cargá el número a mano.');
+      alert('Este celular o navegador no tiene lector de c\u00f3digos. Carg\u00e1 el n\u00famero a mano.');
       return;
     }
+    if (scanStream) return;   // ya est\u00e1 abierto
     var preferidos = ['code_128', 'code_39', 'code_93', 'codabar', 'ean_13', 'ean_8', 'itf', 'upc_a', 'upc_e', 'qr_code', 'data_matrix'];
     BarcodeDetector.getSupportedFormats().then(function (soportados) {
       var formatos = preferidos.filter(function (f) { return soportados.indexOf(f) !== -1; });
@@ -1154,26 +1321,34 @@
       scanStream = stream;
       var v = document.getElementById('scanVideo');
       v.srcObject = stream;
+      ocultarResultadoScan();
       document.getElementById('scanModal').classList.remove('hidden');
       var p = v.play();
       if (p && p.catch) p.catch(function () {});
-      var ocupado = false;
-      scanTimer = setInterval(function () {
-        if (ocupado || v.readyState < 2) return;
-        ocupado = true;
-        scanDetector.detect(v).then(function (codigos) {
-          ocupado = false;
-          if (scanTimer && codigos && codigos.length) alSerLeido(codigos[0].rawValue);
-        }).catch(function () { ocupado = false; });
-      }, 250);
+      configurarControlesCamara(stream);
+      iniciarDeteccion();
     }).catch(function (err) {
       detenerScan();
-      alert('No se pudo abrir la cámara (' + (err && err.name ? err.name : 'error') + '). Revisá el permiso de cámara de la app.');
+      alert('No se pudo abrir la c\u00e1mara (' + (err && err.name ? err.name : 'error') + '). Revis\u00e1 el permiso de c\u00e1mara de la app.');
     });
   };
 
   document.getElementById('btnCerrarScan').addEventListener('click', detenerScan);
   document.addEventListener('visibilitychange', function () { if (document.hidden) detenerScan(); });
+
+  // Enter: del n\u00famero pasa a la altura; en la altura agrega el medidor
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' || !e.target || !e.target.id) return;
+    if (e.target.id === 'inpMedidor') {
+      e.preventDefault();
+      var alt = document.getElementById('inpAltura'); if (alt) alt.focus();
+    } else if (e.target.id === 'inpAltura') {
+      e.preventDefault();
+      var route = getRoute(currentRouteId);
+      var idx = route ? findActiveCalleIndex(route) : -1;
+      if (idx !== -1) window.appAgregarMedidor(route.calles[idx].id);
+    }
+  });
 
   window.appMover = function (calleId, idx, dir) {
     var route = getRoute(currentRouteId);
