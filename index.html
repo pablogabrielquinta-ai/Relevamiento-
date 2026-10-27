@@ -600,6 +600,23 @@
     return { pts: pts, sin: sin };
   }
 
+  function compartirImagenMapa(blob, nombre, titulo) {
+    var file = new File([blob], nombre, { type: 'image/png' });
+    if (navigator.canShare && navigator.share && navigator.canShare({ files: [file] })) {
+      navigator.share({ files: [file], title: titulo, text: titulo }).catch(function (err) {
+        if (err && err.name === 'AbortError') return;
+        alert('No se pudo compartir: ' + (err && err.message ? err.message : err));
+      });
+    } else {
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url; a.download = nombre;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+      alert('Este navegador no permite compartir directo. Se descargó la imagen del mapa en Descargas.');
+    }
+  }
+
   function crearMapa(contenedor, opciones) {
     var canvas = document.createElement('canvas');
     canvas.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;touch-action:none;display:block;';
@@ -618,13 +635,14 @@
 
     var caja = document.createElement('div'); caja.className = 'map-ctrl';
     function mkBtn(txt, titulo) { var b = document.createElement('button'); b.textContent = txt; b.title = titulo; return b; }
-    var bMas = mkBtn('+', 'Acercar'), bMenos = mkBtn('\u2212', 'Alejar'), bAj = mkBtn('\u25a3', 'Ver todo'), bYo = mkBtn('\u2316', 'Mi ubicaci\u00f3n');
-    caja.appendChild(bMas); caja.appendChild(bMenos); caja.appendChild(bAj); caja.appendChild(bYo);
+    var bMas = mkBtn('+', 'Acercar'), bMenos = mkBtn('\u2212', 'Alejar'), bAj = mkBtn('\u25a3', 'Ver todo'), bYo = mkBtn('\u2316', 'Mi ubicaci\u00f3n'), bSh = mkBtn('\uD83D\uDCE4', 'Compartir mapa');
+    bSh.style.fontSize = '18px';
+    caja.appendChild(bMas); caja.appendChild(bMenos); caja.appendChild(bAj); caja.appendChild(bYo); caja.appendChild(bSh);
     contenedor.appendChild(caja);
 
     var W = 300, H = 300, dpr = 1;
     var lat0 = -27.47, lon0 = -58.83, z = 14;
-    var capas = [], pins = [], tiles = {}, nTiles = 0, yo = null, pendiente = false;
+    var capas = [], pins = [], tiles = {}, nTiles = 0, yo = null, pendiente = false, sinTiles = false;
 
     function mx(lon, zz) { return (lon + 180) / 360 * 256 * Math.pow(2, zz); }
     function my(lat, zz) { var s = Math.sin(lat * Math.PI / 180); return (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * 256 * Math.pow(2, zz); }
@@ -649,6 +667,7 @@
       if (t) return t;
       if (nTiles > 250) { tiles = {}; nTiles = 0; }
       var img = new Image(); t = { img: img, ok: false };
+      img.crossOrigin = 'anonymous';
       img.onload = function () { t.ok = true; pedir(); };
       img.src = 'https://tile.openstreetmap.org/' + key + '.png';
       tiles[key] = t; nTiles++;
@@ -658,7 +677,7 @@
     function fondo() {
       ctx.fillStyle = '#1b2029'; ctx.fillRect(0, 0, W, H);
       var conTiles = false;
-      if (navigator.onLine) {
+      if (navigator.onLine && !sinTiles) {
         var tz = Math.max(1, Math.min(19, Math.round(z)));
         var esc = Math.pow(2, z - tz), cx = mx(lon0, tz), cy = my(lat0, tz);
         var x0 = cx - (W / 2) / esc, y0 = cy - (H / 2) / esc;
@@ -764,6 +783,66 @@
       lon0 = lonDe((mx(c0, 0) + mx(d0, 0)) / 2, 0); lat0 = latDe((my(a, 0) + my(b, 0)) / 2, 0);
       pedir();
     }
+    // ---- exportar el mapa como imagen (con título y marcas) ----
+    function armarImagen(forzarSinTiles) {
+      var info = opciones.infoExport ? opciones.infoExport() : { titulo: '', sub: '' };
+      var esc = 2, banda = 74;
+      var tmp = document.createElement('canvas');
+      tmp.width = Math.round(W * esc); tmp.height = Math.round(H * esc);
+      var ctxMain = ctx, dprMain = dpr, sinMain = sinTiles;
+      ctx = tmp.getContext('2d'); dpr = esc; sinTiles = !!forzarSinTiles;
+      try { dibujar(); } finally { ctx = ctxMain; dpr = dprMain; sinTiles = sinMain; }
+      var conTilesImg = attr.style.display === 'block';
+      var off = document.createElement('canvas');
+      off.width = tmp.width; off.height = tmp.height + banda * esc;
+      var o = off.getContext('2d');
+      o.fillStyle = '#0f2b52'; o.fillRect(0, 0, off.width, banda * esc);
+      o.textBaseline = 'top'; o.textAlign = 'left';
+      o.fillStyle = '#ffffff'; o.font = 'bold ' + (24 * esc) + 'px sans-serif';
+      o.fillText(info.titulo || '', 16 * esc, 12 * esc, off.width - 32 * esc);
+      o.fillStyle = '#b4cdf0'; o.font = (15 * esc) + 'px sans-serif';
+      o.fillText(info.sub || '', 16 * esc, 46 * esc, off.width - 32 * esc);
+      o.drawImage(tmp, 0, banda * esc);
+      // referencias abajo a la izquierda
+      var items = [];
+      if (opciones.leyenda) { for (var i = 0; i < capas.length && i < 12; i++) items.push({ c: capas[i].color, t: capas[i].label + ' = ' + capas[i].nombre }); }
+      else { items.push({ c: '#4caf50', t: 'Inicio' }); items.push({ c: '#ef5350', t: 'Fin' }); items.push({ c: capas.length ? capas[0].color : '#ffb300', t: 'Medidores en orden' }); }
+      if (items.length) {
+        var lh = 22 * esc, pw = 0;
+        o.font = (14 * esc) + 'px sans-serif';
+        for (var k = 0; k < items.length; k++) pw = Math.max(pw, o.measureText(items[k].t).width);
+        var bw = pw + 40 * esc, bh = items.length * lh + 12 * esc;
+        var bx = 10 * esc, by = off.height - bh - 10 * esc - (conTilesImg ? 14 * esc : 0);
+        o.fillStyle = 'rgba(15,28,45,0.85)'; o.fillRect(bx, by, bw, bh);
+        for (var m2 = 0; m2 < items.length; m2++) {
+          o.beginPath(); o.arc(bx + 14 * esc, by + 6 * esc + m2 * lh + lh / 2, 6 * esc, 0, Math.PI * 2); o.fillStyle = items[m2].c; o.fill();
+          o.fillStyle = '#ffffff'; o.textBaseline = 'middle'; o.fillText(items[m2].t, bx + 28 * esc, by + 6 * esc + m2 * lh + lh / 2);
+        }
+      }
+      if (conTilesImg) { o.fillStyle = 'rgba(255,255,255,0.8)'; o.textBaseline = 'alphabetic'; o.textAlign = 'right'; o.font = (11 * esc) + 'px sans-serif'; o.fillText('© OpenStreetMap', off.width - 8 * esc, off.height - 6 * esc); }
+      return off;
+    }
+    function exportar(listo) {
+      if (!capas.length) { listo(null); return; }
+      var blob = null;
+      function terminar(b) { pedir(); listo(b); }
+      try {
+        armarImagen(false).toBlob(function (b) { terminar(b); }, 'image/png');
+      } catch (e) {
+        // el fondo de calles impidió exportar: se genera igual, sin fondo
+        try { armarImagen(true).toBlob(function (b) { terminar(b); }, 'image/png'); } catch (e2) { terminar(null); }
+      }
+    }
+    bSh.addEventListener('click', function () {
+      if (!capas.length) { alert('Todavía no hay ubicaciones para compartir.'); return; }
+      showToast('Generando imagen...');
+      exportar(function (b) {
+        if (!b) { alert('No se pudo generar la imagen del mapa.'); return; }
+        var info = opciones.infoExport ? opciones.infoExport() : { titulo: 'Mapa', nombre: 'mapa' };
+        compartirImagenMapa(b, (info.nombre || 'mapa') + '_' + stamp() + '.png', info.titulo || 'Mapa');
+      });
+    });
+
     function zoomA(nz) { z = Math.max(2, Math.min(19, nz)); pedir(); }
     bMas.addEventListener('click', function () { zoomA(z + 1); });
     bMenos.addEventListener('click', function () { zoomA(z - 1); });
@@ -838,6 +917,11 @@
       mapaHome = crearMapa(document.getElementById('mapaHome'), {
         leyenda: true,
         textoVacio: 'Cuando cargues medidores, las rutas aparecen ac\u00e1 con su color.',
+        infoExport: function () {
+          var rs = loadRoutes(), med = 0;
+          for (var q = 0; q < rs.length; q++) med += totalMedidores(rs[q]);
+          return { titulo: 'Armador de Ruta \u2014 Mapa de rutas', sub: rs.length + ' rutas \u2022 ' + med + ' medidores \u2022 ' + fmtFecha(todayISO()), nombre: 'mapa_rutas' };
+        },
         onTap: function (info) { if (info && info.capa && info.capa.id) appAbrirRuta(info.capa.id); }
       });
     }
@@ -855,6 +939,11 @@
       mapaRuta = crearMapa(document.getElementById('mapaRuta'), {
         leyenda: false,
         textoVacio: 'Esta ruta todav\u00eda no tiene ubicaciones. Se guardan solas al agregar cada medidor.',
+        infoExport: function () {
+          var r = getRoute(currentRouteId);
+          if (!r) return { titulo: 'Mapa', sub: '', nombre: 'mapa' };
+          return { titulo: 'RUTA ' + r.numero + ' \u2014 Mapa del recorrido', sub: fmtFecha(r.fecha) + (r.zona ? ' \u2022 ' + r.zona : '') + ' \u2022 ' + totalMedidores(r) + ' medidores', nombre: 'mapa_ruta_' + r.numero };
+        },
         onTap: function (info) {
           if (info && info.pt) showToast(pad3(info.pt.n) + ' \u00b7 ' + info.pt.calle + ' \u00b7 medidor ' + info.pt.med);
         }
