@@ -98,6 +98,14 @@
   .route-card .rdelete { background: none; border: none; color: var(--red); font-size: 18px; padding: 6px 8px; }
   .firma-pie { margin: 26px 0 8px; text-align: center; font-size: 11px; color: var(--text-dim); opacity: 0.75; line-height: 1.6; }
   .firma-pie span { display: block; font-size: 13px; font-weight: 700; letter-spacing: 0.08em; color: var(--text); opacity: 0.8; }
+  .btn-lect { width: 100%; margin-bottom: 12px; text-align: left; display: flex; justify-content: space-between; align-items: center; }
+  .btn-lect b { color: var(--amber); }
+  .btn-lect span { color: var(--text-dim); font-size: 12px; }
+  .nombre-modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.88); z-index: 900; display: flex; align-items: center; justify-content: center; padding: 18px; }
+  .nombre-box { width: 100%; max-width: 420px; background: var(--bg-card); border: 2px solid var(--amber); border-radius: 14px; padding: 18px; }
+  .nombre-box h2 { margin: 0 0 6px; font-size: 18px; color: var(--amber); }
+  .nombre-box p { margin: 0 0 12px; font-size: 13px; color: var(--text-dim); }
+  .firma-pie .ver { display: block; margin-top: 6px; font-size: 11px; font-weight: 400; letter-spacing: 0; color: var(--text-dim); opacity: 0.8; }
   .empty-state { text-align: center; color: var(--text-dim); padding: 30px 10px; font-size: 13px; }
 
   /* Tabs */
@@ -246,6 +254,8 @@
   <!-- ===== PANTALLA HOME ===== -->
   <div id="screenHome">
 
+    <button class="btn-sec btn-lect" id="btnLecturista"><div>&#128100; Lecturista: <b id="lecturistaNombre">-</b></div><span>cambiar</span></button>
+
     <div class="card" id="cardNuevaRuta">
       <button class="btn-main" id="btnMostrarNuevaRuta">&#10133; NUEVA RUTA</button>
       <div id="formNuevaRuta" class="hidden">
@@ -319,7 +329,19 @@
 
 </div>
 
-<div class="firma-pie"><span>&lt;&nbsp;PQG&nbsp;&gt;</span>Desarrollado por Pablo Gabriel Quintana Godoy</div>
+<div class="firma-pie"><span>&lt;&nbsp;PQG&nbsp;&gt;</span>Desarrollado por Pablo Gabriel Quintana Godoy<span class="ver" id="verApp"></span></div>
+
+<div class="nombre-modal hidden" id="modalNombre">
+  <div class="nombre-box">
+    <h2>&#128100; Nombre del lecturista</h2>
+    <p id="nombreAyuda">Escrib&iacute; tu nombre y apellido. Se guarda en este celular y sale en el Excel y en las fotos.</p>
+    <input type="text" id="inpNombre" placeholder="Ej: Juan P&eacute;rez" autocomplete="off">
+    <div class="btn-row">
+      <button class="btn-sec hidden" id="btnNombreCancelar">Cancelar</button>
+      <button class="btn-sec green" id="btnNombreGuardar">Guardar</button>
+    </div>
+  </div>
+</div>
 
 <div class="toast" id="toast">Guardado &#10003;</div>
 
@@ -359,7 +381,13 @@
 
 <script>
 (function () {
+  var APP_VERSION = '14';   // mantener igual que CACHE_NAME en sw.js
   var STORAGE_KEY = 'dpec_armador_rutas_v1';
+  var NOMBRE_KEY = 'dpec_armador_lecturista';
+  function getLecturista() { try { return (localStorage.getItem(NOMBRE_KEY) || '').trim(); } catch (e) { return ''; } }
+  function setLecturista(n) { try { localStorage.setItem(NOMBRE_KEY, String(n || '').trim()); } catch (e) {} }
+  function limpioCsv(t) { return String(t == null ? '' : t).replace(/[;\r\n]+/g, ' ').trim(); }
+  function lecturistaDe(route) { return (route && route.lecturista) ? route.lecturista : getLecturista(); }
   var SESSION_KEY = 'dpec_armador_rutas_session_v1';
   var currentGps = null;
   var currentRouteId = null;
@@ -487,7 +515,7 @@
           'RUTA ' + route.numero + ' \u2022 ' + route.calles[i].nombre + (m.altura ? ' ' + m.altura : ''),
           'Medidor N\u00b0 ' + m.numMedidor + ' \u2022 Orden ' + pad3(ordenGlobalDe(route, i, j)),
           pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getFullYear() + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ' \u2022 ' + gps
-        ];
+        ].concat(lecturistaDe(route) ? ['Lecturista: ' + lecturistaDe(route)] : []);
       }
     }
     return null;
@@ -942,7 +970,7 @@
         infoExport: function () {
           var r = getRoute(currentRouteId);
           if (!r) return { titulo: 'Mapa', sub: '', nombre: 'mapa' };
-          return { titulo: 'RUTA ' + r.numero + ' \u2014 Mapa del recorrido', sub: fmtFecha(r.fecha) + (r.zona ? ' \u2022 ' + r.zona : '') + ' \u2022 ' + totalMedidores(r) + ' medidores', nombre: 'mapa_ruta_' + r.numero };
+          return { titulo: 'RUTA ' + r.numero + ' \u2014 Mapa del recorrido', sub: fmtFecha(r.fecha) + (r.zona ? ' \u2022 ' + r.zona : '') + ' \u2022 ' + totalMedidores(r) + ' medidores' + (lecturistaDe(r) ? ' \u2022 ' + lecturistaDe(r) : ''), nombre: 'mapa_ruta_' + r.numero };
         },
         onTap: function (info) {
           if (info && info.pt) showToast(pad3(info.pt.n) + ' \u00b7 ' + info.pt.calle + ' \u00b7 medidor ' + info.pt.med);
@@ -1002,7 +1030,7 @@
     var zona = document.getElementById('zonaRuta').value.trim();
     if (!numero) { alert('Ingres\u00e1 el n\u00famero de ruta.'); return; }
 
-    var route = { id: uid('ruta'), numero: numero, fecha: fecha, zona: zona, calles: [], createdTs: Date.now() };
+    var route = { id: uid('ruta'), numero: numero, fecha: fecha, zona: zona, lecturista: getLecturista(), calles: [], createdTs: Date.now() };
     var routes = loadRoutes();
     routes.push(route);
     saveRoutes(routes);
@@ -1614,7 +1642,7 @@
 
   function renderPrintArea(route, fotosPorId) {
     var html = '<div class="print-title">RUTA ' + escapeHtml(route.numero) + '</div>';
-    html += '<div class="print-sub">' + fmtFecha(route.fecha) + (route.zona ? ' \u2022 ' + escapeHtml(route.zona) : '') + ' \u2022 ' + totalMedidores(route) + ' medidores</div>';
+    html += '<div class="print-sub">' + fmtFecha(route.fecha) + (route.zona ? ' \u2022 ' + escapeHtml(route.zona) : '') + ' \u2022 ' + totalMedidores(route) + ' medidores' + (lecturistaDe(route) ? ' \u2022 Lecturista: ' + escapeHtml(lecturistaDe(route)) : '') + '</div>';
     for (var i = 0; i < route.calles.length; i++) {
       var calle = route.calles[i];
       html += '<div class="print-calle">\uD83D\uDEE3\uFE0F ' + escapeHtml(calle.nombre) + ' \u2014 ' + calle.medidores.length + ' medidores</div>';
@@ -1636,7 +1664,7 @@
   // ---------- Export CSV ----------
   function buildCsv(routes) {
     var hasData = false;
-    var rows = ['Ruta;Fecha;Zona;Orden Global;Calle;Orden en Calle;N\u00b0 Medidor;Altura;Foto;Latitud;Longitud;Precision GPS (m)'];
+    var rows = ['Ruta;Fecha;Zona;Orden Global;Calle;Orden en Calle;N\u00b0 Medidor;Altura;Foto;Latitud;Longitud;Precision GPS (m);Lecturista'];
     for (var r = 0; r < routes.length; r++) {
       var route = routes[r];
       var globalOrden = 0;
@@ -1649,7 +1677,7 @@
           var row = [
             route.numero, fmtFecha(route.fecha), route.zona || '',
             pad3(globalOrden), calle.nombre, pad3(j + 1),
-            m.numMedidor, m.altura || '', (m.tieneFoto ? 'S\u00ed' : 'No'), m.lat || '', m.lon || '', m.acc || ''
+            m.numMedidor, m.altura || '', (m.tieneFoto ? 'S\u00ed' : 'No'), m.lat || '', m.lon || '', m.acc || '', limpioCsv(lecturistaDe(route))
           ];
           rows.push(row.join(';'));
         }
@@ -1728,6 +1756,33 @@
   document.getElementById('btnShareExcel').addEventListener('click', function () { compartirRuta(false); });
   document.getElementById('btnShareFotos').addEventListener('click', function () { compartirRuta(true); });
 
+  // ---------- nombre del lecturista ----------
+  function mostrarNombre() {
+    var n = getLecturista();
+    document.getElementById('lecturistaNombre').textContent = n || 'sin nombre';
+  }
+  function abrirModalNombre(obligatorio) {
+    var m = document.getElementById('modalNombre');
+    document.getElementById('inpNombre').value = getLecturista();
+    document.getElementById('btnNombreCancelar').classList.toggle('hidden', !!obligatorio);
+    m.classList.remove('hidden');
+    setTimeout(function () { document.getElementById('inpNombre').focus(); }, 150);
+  }
+  function guardarNombre() {
+    var v = document.getElementById('inpNombre').value.trim();
+    if (v.length < 3) { alert('Escrib\u00ed tu nombre y apellido.'); return; }
+    setLecturista(v);
+    document.getElementById('modalNombre').classList.add('hidden');
+    mostrarNombre();
+    showToast('Nombre guardado \u2713');
+  }
+  document.getElementById('btnNombreGuardar').addEventListener('click', guardarNombre);
+  document.getElementById('inpNombre').addEventListener('keydown', function (e) { if (e.key === 'Enter') guardarNombre(); });
+  document.getElementById('btnNombreCancelar').addEventListener('click', function () { document.getElementById('modalNombre').classList.add('hidden'); });
+  document.getElementById('btnLecturista').addEventListener('click', function () { abrirModalNombre(false); });
+  document.getElementById('verApp').textContent = 'Versi\u00f3n ' + APP_VERSION;
+  mostrarNombre();
+
   // ---------- init ----------
   var session = loadSession();
   if (session && session.routeId && getRoute(session.routeId)) {
@@ -1736,6 +1791,7 @@
   } else {
     renderHome();
   }
+  if (!getLecturista()) abrirModalNombre(true);
   startGpsWatch();
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', function () {
