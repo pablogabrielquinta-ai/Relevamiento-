@@ -264,14 +264,12 @@
     <button class="btn-sec btn-lect" id="btnLecturista"><div>&#128100; Lecturista: <b id="lecturistaNombre">-</b></div><span>cambiar</span></button>
 
     <div class="card" id="cardNuevaRuta">
-      <button class="btn-main" id="btnMostrarNuevaRuta">&#10133; NUEVA RUTA</button>
+      <button class="btn-main" id="btnMostrarNuevaRuta">&#10133; NUEVA ZONA / BARRIO</button>
       <div id="formNuevaRuta" class="hidden">
-        <label for="numRuta">N&uacute;mero de ruta</label>
-        <input type="text" id="numRuta" inputmode="numeric" placeholder="Ej: 163">
-        <label for="fechaRuta">Fecha</label>
-        <input type="date" id="fechaRuta">
-        <label for="zonaRuta">Zona / barrio (opcional)</label>
-        <input type="text" id="zonaRuta" placeholder="Ej: Zona Norte">
+        <label for="numRuta">Zona o barrio</label>
+        <input type="text" id="numRuta" placeholder="Ej: Barrio Cremonte" autocomplete="off">
+        <div style="display:none;"><label for="fechaRuta">Fecha</label>
+        <input type="date" id="fechaRuta"></div>
         <div class="btn-row">
           <button class="btn-sec" id="btnCancelarNuevaRuta">Cancelar</button>
           <button class="btn-sec green" id="btnCrearRuta">Crear ruta</button>
@@ -415,7 +413,7 @@
 
 <script>
 (function () {
-  var APP_VERSION = '17';   // mantener igual que CACHE_NAME en sw.js
+  var APP_VERSION = '19';   // mantener igual que CACHE_NAME en sw.js
   var STORAGE_KEY = 'dpec_armador_rutas_v1';
   var NOMBRE_KEY = 'dpec_armador_lecturista';
   function getLecturista() { try { return (localStorage.getItem(NOMBRE_KEY) || '').trim(); } catch (e) { return ''; } }
@@ -991,7 +989,7 @@
     for (var i = 0; i < routes.length; i++) {
       var d = puntosDeRuta(routes[i]);
       if (!d.pts.length) { if (totalMedidores(routes[i]) > 0) sinRuta++; continue; }
-      capas.push({ id: routes[i].id, color: COLORES[i % COLORES.length], label: String(i + 1), nombre: 'Ruta ' + routes[i].numero, pts: d.pts, modo: 'resumen' });
+      capas.push({ id: routes[i].id, color: COLORES[i % COLORES.length], label: String(i + 1), nombre: routes[i].numero, pts: d.pts, modo: 'resumen' });
     }
     mapaHome.setCapas(capas, sinRuta ? (sinRuta + (sinRuta === 1 ? ' ruta sin ubicaciones' : ' rutas sin ubicaciones')) : '');
   }
@@ -1004,7 +1002,7 @@
         infoExport: function () {
           var r = getRoute(currentRouteId);
           if (!r) return { titulo: 'Mapa', sub: '', nombre: 'mapa' };
-          return { titulo: 'RUTA ' + r.numero + ' \u2014 Mapa del recorrido', sub: fmtFecha(r.fecha) + (r.zona ? ' \u2022 ' + r.zona : '') + ' \u2022 ' + totalMedidores(r) + ' medidores' + (lecturistaDe(r) ? ' \u2022 ' + lecturistaDe(r) : ''), nombre: 'mapa_ruta_' + r.numero };
+          return { titulo: r.numero + ' \u2014 Mapa del recorrido', sub: fmtFecha(r.fecha) + ' \u2022 ' + totalMedidores(r) + ' medidores' + (lecturistaDe(r) ? ' \u2022 ' + lecturistaDe(r) : ''), nombre: 'mapa_ruta_' + r.numero };
         },
         onTap: function (info) {
           if (info && info.pt) showToast(pad3(info.pt.n) + ' \u00b7 ' + info.pt.calle + ' \u00b7 medidor ' + info.pt.med);
@@ -1012,7 +1010,7 @@
       });
     }
     var d = puntosDeRuta(route);
-    mapaRuta.setCapas(d.pts.length ? [{ id: route.id, color: '#ffb300', label: '', nombre: 'Ruta ' + route.numero, pts: d.pts, modo: 'detalle' }] : [],
+    mapaRuta.setCapas(d.pts.length ? [{ id: route.id, color: '#ffb300', label: '', nombre: route.numero, pts: d.pts, modo: 'detalle' }] : [],
       d.sin ? (d.sin + (d.sin === 1 ? ' medidor sin ubicaci\u00f3n' : ' medidores sin ubicaci\u00f3n')) : '');
   }
 
@@ -1040,7 +1038,7 @@
       var ci = routes.indexOf(r);
       html += '<div class="route-card" onclick="appAbrirRuta(\'' + r.id + '\')">';
       html += '<div class="circ" style="background:' + COLORES[ci % COLORES.length] + '">' + (ci + 1) + '</div>';
-      html += '<div class="info"><div class="rname">RUTA ' + escapeHtml(r.numero) + '</div>';
+      html += '<div class="info"><div class="rname">' + escapeHtml(r.numero) + '</div>';
       html += '<div class="rmeta">' + fmtFecha(r.fecha) + (r.zona ? ' &bull; ' + escapeHtml(r.zona) : '') + ' &bull; ' + totalMedidores(r) + ' medidores</div></div>';
       html += '<button class="rdelete" onclick="event.stopPropagation(); appEliminarRuta(\'' + r.id + '\')">&#128465;</button>';
       html += '</div>';
@@ -1061,8 +1059,8 @@
   document.getElementById('btnCrearRuta').addEventListener('click', function () {
     var numero = document.getElementById('numRuta').value.trim();
     var fecha = document.getElementById('fechaRuta').value || todayISO();
-    var zona = document.getElementById('zonaRuta').value.trim();
-    if (!numero) { alert('Ingres\u00e1 el n\u00famero de ruta.'); return; }
+    var zona = numero;
+    if (!numero) { alert('Ingres\u00e1 la zona o el barrio.'); return; }
 
     var route = { id: uid('ruta'), numero: numero, fecha: fecha, zona: zona, lecturista: getLecturista(), calles: [], createdTs: Date.now() };
     var routes = loadRoutes();
@@ -1070,7 +1068,6 @@
     saveRoutes(routes);
 
     document.getElementById('numRuta').value = '';
-    document.getElementById('zonaRuta').value = '';
     document.getElementById('formNuevaRuta').classList.add('hidden');
     document.getElementById('btnMostrarNuevaRuta').classList.remove('hidden');
 
@@ -1148,8 +1145,8 @@
     var route = getRoute(currentRouteId);
     if (!route) { volverHome(); return; }
 
-    document.getElementById('headerTitle').textContent = 'RUTA ' + route.numero + ' \u2014 ' + totalMedidores(route) + ' MEDIDORES';
-    document.getElementById('headerSub').textContent = (route.zona ? route.zona + ' \u2022 ' : '') + fmtFecha(route.fecha);
+    document.getElementById('headerTitle').textContent = String(route.numero).toUpperCase() + ' \u2014 ' + totalMedidores(route) + ' MEDIDORES';
+    document.getElementById('headerSub').textContent = fmtFecha(route.fecha);
 
     if (currentTab === 'armado') renderArmado(route);
     else if (currentTab === 'recorrido') renderRecorrido(route);
@@ -1710,7 +1707,7 @@
 
   document.getElementById('btnExportRuta').addEventListener('click', function () {
     var route = getRoute(currentRouteId);
-    exportRoutesToCsv([route], 'ruta_' + route.numero);
+    exportRoutesToCsv([route], 'ruta_' + String(route.numero).replace(/[^A-Za-z0-9]+/g, '_'));
   });
 
   document.getElementById('btnExportPdf').addEventListener('click', function () {
@@ -1732,7 +1729,7 @@
   });
 
   function renderPrintArea(route, fotosPorId) {
-    var html = '<div class="print-title">RUTA ' + escapeHtml(route.numero) + '</div>';
+    var html = '<div class="print-title">' + escapeHtml(route.numero) + '</div>';
     html += '<div class="print-sub">' + fmtFecha(route.fecha) + (route.zona ? ' \u2022 ' + escapeHtml(route.zona) : '') + ' \u2022 ' + totalMedidores(route) + ' medidores' + (lecturistaDe(route) ? ' \u2022 Lecturista: ' + escapeHtml(lecturistaDe(route)) : '') + '</div>';
     for (var i = 0; i < route.calles.length; i++) {
       var calle = route.calles[i];
@@ -1810,9 +1807,9 @@
     var route = getRoute(currentRouteId);
     var csv = buildCsv([route]);
     if (!csv) { alert('No hay medidores cargados para compartir.'); return; }
-    var base = 'ruta_' + route.numero + '_' + stamp();
+    var base = 'ruta_' + String(route.numero).replace(/[^A-Za-z0-9]+/g, '_') + '_' + stamp();
     var files = [new File([csv], base + '.csv', { type: 'text/csv' })];
-    var titulo = 'Ruta ' + route.numero + ' - ' + fmtFecha(route.fecha);
+    var titulo = route.numero + ' - ' + fmtFecha(route.fecha);
 
     function enviar() {
       if (navigator.canShare && navigator.canShare({ files: files }) && navigator.share) {
@@ -1821,7 +1818,7 @@
           alert('No se pudo compartir: ' + (err && err.message ? err.message : err));
         });
       } else {
-        exportRoutesToCsv([route], 'ruta_' + route.numero);
+        exportRoutesToCsv([route], 'ruta_' + String(route.numero).replace(/[^A-Za-z0-9]+/g, '_'));
         alert('Este navegador no permite compartir directo. Se descarg\u00F3 el archivo en Descargas y lo pod\u00E9s enviar desde ah\u00ED.');
       }
     }
